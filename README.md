@@ -11,7 +11,7 @@
 
 | 脚本 | 功能 | AppID | 账号变量 | 青龙命令 |
 |---|---|---|---|---|
-| `sfsy.py` | 顺丰速运自动任务 | `wxd4185d00bf7e08ac` | `sf_openid` | `python sfsy.py` |
+| `sfsy.py` | 顺丰速运自动任务 | `wxd4185d00bf7e08ac` | `sf_openid` | `task sfsy.py` |
 
 账号变量多账号均支持：
 
