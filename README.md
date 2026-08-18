@@ -23,7 +23,7 @@
 
 ```bash
 wx_server_url="http://服务器IP:8000"
-sf_wxid="openid_a&openid_b"
+sf_openid="openid_a&openid_b"
 ```
 
 ## ⚙️ 使用说明
