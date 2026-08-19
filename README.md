@@ -17,6 +17,7 @@
 | ✅  | `sfsy.py` | 顺丰速运签到 | `wxd4185d00bf7e08ac` | Code | `sf_openid` | `task sfsy.py` |
 | ✅  | `trsj.py` | 甜润世界签到 | `wx210e40a77dbe7a27` | Code | `trsj_openid` | `task trsj.py` |
 | ✅  | `cyy.py` | 草原云小程序签到 | `wxcf78d47051628692` | Code | `cyy_openid` | `task cyy.py` |
+| ✅  | `wyjh.py` | 无忧计划签到 | `/` | Code | `WY_ACCOUNT` | `task wyjh.py` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
