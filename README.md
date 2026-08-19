@@ -14,7 +14,8 @@
 
 | 状态 | 脚本        | 功能       | AppID                | 登录方式 | 账号变量        | 青龙命令           |
 | -- | --------- | -------- | -------------------- | ---- | ----------- | -------------- |
-| ✅  | `sfsy.py` | 顺丰速运自动任务 | `wxd4185d00bf7e08ac` | Code | `sf_openid` | `task sfsy.py` |
+| ✅  | `sfsy.py` | 顺丰速运签到 | `wxd4185d00bf7e08ac` | Code | `sf_openid` | `task sfsy.py` |
+| ✅  | `trsj.py` | 甜润世界签到 | `wx210e40a77dbe7a27` | Code | `trsj_openid` | `task trsj.py` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
