@@ -1,11 +1,11 @@
 /*
 ------------------------------------------
 Author: anonymous
-Date: 2026.08.21
+Date: 2026.08.22
 Description: 毛铺草本荟小程序签到
 Cron: 5 9,12,20 * * *
 ------------------------------------------
-毛铺草本荟小程序签到 v1.0.0
+毛铺草本荟小程序签到 v1.0.1
 
 功能：自动执行毛铺草本荟小程序每日签到并完成日常任务，支持多账号执行。
 
@@ -291,15 +291,14 @@ class MpcbhClient {
     return null;
   }
 
-  // ==================== 通用游戏活动（代谢研究所/草本实验室/识草寻源，走 worker BlzLonglActivity 通道） ====================
+  // ==================== 通用游戏活动（代谢研究所/草本实验室，走 worker BlzLonglActivity 通道） ====================
   // 配置：label 前缀 → 活动名
   // 配置：label 前缀 → { 活动名, 是否带 use_type:'free' }
-  // 代谢研究所单独不带 use_type（服务端返回 80888），草本实验室/识草寻源需带
+  // 代谢研究所单独不带 use_type（服务端返回 80888），草本实验室 需带
   get activityConfig() {
     return {
       daixieyanjiusuo: { name: '代谢研究所', useType: false },
       caobenshiyanshi: { name: '草本实验室', useType: true },
-      shicaoxunyuan: { name: '识草寻源', useType: true },
     };
   }
 
@@ -344,6 +343,49 @@ class MpcbhClient {
       });
       if (end.code === 0) {
         const award = end.data?.title || end.data?.awardLocal?.title || '未识别';
+        this.log(`✅ ${name}成功，获得${award}`);
+      } else {
+        this.log(`${name} 结束活动失败：${end.message}`);
+      }
+      await sleep(2000);
+    }
+  }
+
+  // ==================== 识草寻源（走 worker BlzLonglActivity 通道）====================
+  async shicaoxunyuanStart() {
+    if (!this.token) return;
+    const label = 'shicaoxunyuan';
+    const name = '识草寻源';
+    // 1) 查次数
+    this.log(`🎮 开始 ${name} ...`);
+    const mains = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
+    if (mains.code !== 0) { this.log(`⚠️ ${name} 查看活动次数失败：${mains.message}`); return; }
+    const times = mains.data?.today_play_num_can;
+    if (!times || times <= 0) { this.log(`⏭️ ${name} 没次数啦`); return; }
+
+    for (let n = 0; n < times; n++) {
+      // 2) 开始 — body={play_time_start, use_type:"free"}，签名 paramOrder=['play_time_start','use_type']
+      let start;
+      for (let attempt = 0; attempt < 2; attempt++) {
+        const startData = { play_time_start: Math.round(Date.now() / 1000), use_type: 'free' };
+        start = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDrawGet`, {
+          method: 'POST', data: startData, paramOrder: ['play_time_start', 'use_type'],
+        });
+        if (start.code === 0 && start.data?.user_record_id) break;
+        if (attempt === 0) { this.log(`${name} 开始活动重试（${start.message}）`); await sleep(3000); }
+      }
+      if (start.code !== 0 || !start.data?.user_record_id) { this.log(`${name} 开始活动失败：${start.message}`); return; }
+      const recordId = start.data?.user_record_id;
+
+      await sleep(8000 + Math.floor(Math.random() * 5000));
+
+      // 3) 结束 — body={play_time_finish, user_record_id}，签名 paramOrder=['play_time_finish','user_record_id']
+      const endData = { play_time_finish: Math.round(Date.now() / 1000), user_record_id: recordId };
+      const end = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDraws`, {
+        method: 'POST', data: endData, paramOrder: ['play_time_finish', 'user_record_id'],
+      });
+      if (end.code === 0) {
+        const award = end.data?.awardLocal?.title || end.data?.title || '未识别';
         this.log(`✅ ${name}成功，获得${award}`);
       } else {
         this.log(`${name} 结束活动失败：${end.message}`);
@@ -649,11 +691,15 @@ async function main() {
       await client.signIn();
       await sleep(2000);
 
-      // 通用游戏活动（代谢研究所/草本实验室/识草寻源，走 worker BlzLonglActivity 通道）
+      // 通用游戏活动（代谢研究所/草本实验室，走 worker BlzLonglActivity 通道）
       for (const [label, cfg] of Object.entries(client.activityConfig)) {
         await client.commonStart(label, cfg.name, cfg.useType);
         await sleep(3000);
       }
+
+      // 识草寻源（独立流程，body/paramOrder 与通用流程不同，不含 activity_id）
+      await client.shicaoxunyuanStart();
+      await sleep(3000);
 
       // 草本寻轻记（春，走主站 BlzLongcaobenActivity 通道）
       for (const [label, name] of Object.entries(client.cbxqjConfig)) {
