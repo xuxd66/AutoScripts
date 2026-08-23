@@ -20,6 +20,7 @@
 | ✅  | `wyjh.py` | 无忧计划签到 | `/` | Code | `WY_ACCOUNT` | `task wyjh.py` |
 | ✅  | `mpcbh.js` | 毛铺草本荟签到 | `wxefd0fe341e06b815` | Code | `mpcbh_openid` | `task mpcbh.js` |
 | ✅  | `jph.py` | 君品荟签到 | `wx8d41cdc44c8aeaab` | Code | `jph_openid` | `task jph.py` |
+| ✅  | `ppcs.js` | 朴朴超市签到 | `wx122ef876a7132eb4` | Code | `ppcs_openid` | `task ppcs.js` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
