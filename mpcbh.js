@@ -406,7 +406,7 @@ class MpcbhClient {
     if (!this.token) return;
     // 1) 查次数（参考：body={}，依据 activity_status==="Can" 且 activity.activity_id 判断）
     this.log(`🎮 开始 ${name} ...`);
-    const mains = await this.api(`${BASE}/BlzLongcaobenActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
+    const mains = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
     if (mains.code !== 0) { this.log(`⚠️ ${name} 获取次数失败，原因：${mains.message}`); return; }
     const statusOk = mains.data?.activity_status === 'Can' || mains.data?.activity?.activity_status === 'Can';
     if (!statusOk || !mains.data?.activity?.activity_id) {
@@ -416,13 +416,13 @@ class MpcbhClient {
     const activityId = String(mains.data.activity.activity_id);
 
     // 2) 开始
-    const start = await this.api(`${BASE}/BlzLongcaobenActivity/${label}UserStarts`, {
+    const start = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserStarts`, {
       method: 'POST', data: { activity_id: activityId }, paramOrder: ['activity_id'], signData: {},
     });
     if (start.code !== 0) { this.log(`${name} 获取信息失败，原因：${start.message}`); return; }
 
     // 3) 抽记录（参考：body={activity_id, play_finish_is:-1}，user_record_id 在此步返回）
-    const draw = await this.api(`${BASE}/BlzLongcaobenActivity/${label}UserDrawGet`, {
+    const draw = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserDrawGet`, {
       method: 'POST', data: { activity_id: activityId, play_finish_is: -1 }, paramOrder: ['activity_id', 'play_finish_is'], signData: {},
     });
     if (draw.code !== 0) { this.log(`${name} 开始失败，原因：${draw.message}`); return; }
@@ -433,7 +433,7 @@ class MpcbhClient {
     await sleep(3000 + Math.floor(Math.random() * 5000));
 
     // 4) 结束
-    const end = await this.api(`${BASE}/BlzLongcaobenActivity/${label}UserDraws`, {
+    const end = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserDraws`, {
       method: 'POST', data: { user_record_id: recordId }, paramOrder: ['user_record_id'], signData: {},
     });
     if (end.code === 0) {
@@ -504,6 +504,67 @@ class MpcbhClient {
       this.log(`✅ ${name} 成功，获得${award}`);
     } else {
       this.log(`${name} 结束失败，原因：${draw.message}`);
+    }
+  }
+
+  // ==================== 寻找毛铺枸杞云玩家 ====================
+  async gojiCloudPlay() {
+    if (!this.token) return;
+    const aid = 100002;
+    const aidStr = String(aid);
+    const name = '寻找毛铺枸杞云玩家';
+
+    // 1) 活动详情
+    this.log(`🌿 开始 ${name}...`);
+    const details = await this.api(`${BASE}/opactivity/ccncommon/activityDetails`, {
+      method: 'POST', data: { activity_id: aid }, paramOrder: [], signData: { activity_id: aidStr },
+    });
+    if (details.code !== 0) { this.log(`⚠️ ${name} 获取详情失败，原因：${details.message}`); return; }
+
+    // 2) 主页次数
+    const mains = await this.api(`${BASE}/opactivity/ccncommon/dateUserMains`, {
+      method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' }, paramOrder: ['activity_id'], signData: { activity_id: aidStr },
+    });
+    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取信息失败，原因：${mains.message}`); return; }
+    if (mains.data?.activity_status !== 'Can' || !mains.data?.activity?.activity_id) {
+      this.log(`⏭️ ${name} 今天没次数啦`);
+      return;
+    }
+
+    // 3) 开始（种苗-浇水-施肥-求帮养）
+    const start = await this.api(`${BASE}/opactivity/ccncommon/userStarts`, {
+      method: 'POST',
+      data: { activity_id: aid, province: '', city: '', district: '', latitude: '', longitude: '' },
+      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aidStr },
+    });
+    if (start.code !== 0) { this.log(`${name} 开始失败，原因：${start.message}`); return; }
+
+    await sleep(3000 + Math.floor(Math.random() * 5000));
+
+    // 4) 完成
+    const finish = await this.api(`${BASE}/opactivity/ccncommon/userFinishs`, {
+      method: 'POST',
+      data: { activity_id: aidStr, latitude: '', longitude: '', province: '', city: '', district: '', play_finish_is: 1 },
+      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aidStr },
+    });
+    if (finish.code !== 0) { this.log(`${name} 结束失败，原因：${finish.message}`); return; }
+    const playId = finish.data?.user_play_id;
+    if (!playId) { this.log(`${name} user_play_id获取失败`); return; }
+    this.log(`🎯 获取到游戏记录id：${playId}`);
+
+    await sleep(2000);
+
+    // 5) 抽奖
+    const draw = await this.api(`${BASE}/opactivity/ccncommon/datelUserDraws`, {
+      method: 'POST',
+      data: { activity_id: aidStr, province: '', city: '', district: '', user_play_id: playId },
+      paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aidStr },
+    });
+    if (draw.code === 0) {
+      const award = draw.data?.award?.AwardName || draw.data?.awardLocal?.title || '未识别';
+      this.log(`✅ ${name} 成功，获得${award}`);
+    } else {
+      this.log(`${name} 抽奖失败，原因：${draw.message}`);
     }
   }
 
@@ -716,6 +777,10 @@ async function main() {
       // 观看视频
       client.log(`📺 开始 观看视频...`);
       await client.taskViewVideoView();
+      await sleep(2000);
+
+      // 寻找毛铺枸杞云玩家
+      await client.gojiCloudPlay();
       await sleep(2000);
 
       // 订阅消息（配置见 subscribeConfig：超级会员日 + 毛铺草本荟小程序 + 草本寻轻记）
