@@ -23,6 +23,7 @@
 | ✅  | `ppcs.js` | 朴朴超市签到 | `wx122ef876a7132eb4` | Code | `ppcs_openid` | `task ppcs.js` |
 | ✅  | `oppo.py` | OPPO商城签到 | `wxe705c556754a1de2` | Code | `oppo_openid` | `task oppo.py` |
 | ✅  | `mdhy.js` | 美的会员签到 | `wx49a622805968d156` | Code | `midea_openid` | `task mdhy.js` |
+| ✅  | `fh.py` | 飞鹤小程序签到 | `wx4205ec55b793245e` | Code | `fh_openid` | `task fh.py` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
