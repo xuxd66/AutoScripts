@@ -25,6 +25,7 @@
 | ✅  | `mdhy.js` | 美的会员签到 | `wx49a622805968d156` | Code | `midea_openid` | `task mdhy.js` |
 | ✅  | `fh.py` | 飞鹤小程序签到 | `wx4205ec55b793245e` | Code | `fh_openid` | `task fh.py` |
 | ✅  | `xmh.py` | 星妈会小程序签到 | `wxc83b55d61c7fc51d` | Code | `xmh_openid` | `task xmh.py` |
+| ✅  | `ysjf.js` | 影视飓风小程序签到 | `wx92782ef90ebc836d` | Code | `ysjf_openid` | `task ysjf.js` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
