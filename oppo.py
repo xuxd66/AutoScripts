@@ -65,26 +65,25 @@ API_SIGN_IN = f"{HD_BASE}/api/cn/oapi/marketing/cumulativeSignIn/signIn"
 API_DRAW_CUMULATIVE = f"{HD_BASE}/api/cn/oapi/marketing/cumulativeSignIn/drawCumulativeAward"
 API_GOODS_DETAIL = "https://msec.opposhop.cn/cms-business/goods/detail"
 
-# 默认活动 ID（落地页解析失败时回退）
-# 主用 ID（已验证有效）；备用 ID 来自社区脚本，主用失效时自动回退
-SIGN_ACTIVITY_IDS = [
-    os.environ.get("oppo_sign_activity_id", "2083099953777090560"),
-    "2061050217641549824",
-]
+# ---- 落地页 ----
+LANDING_PAGE = "https://hd.opposhop.cn/bp/b371ce270f7509f0"
+LANDING_PARAMS = "?nightModelEnable=true&us=wode&um=qiandaobanner&colorScheme=light"
+
 CREDITS_ADD_ACTION_ID = os.environ.get("oppo_credits_action_id", "1788913e6d9e4683b8b9ab0088733560")
-TASK_ACTIVITY_ID = os.environ.get("oppo_task_activity_id", "1919591795180969984")
 
 # 任务接口
 API_TASK_LIST = f"{HD_BASE}/api/cn/oapi/marketing/task/queryTaskList"
 API_TASK_REPORT = f"{HD_BASE}/api/cn/oapi/marketing/taskReport/signInOrShareTask"
 API_TASK_RECEIVE = f"{HD_BASE}/api/cn/oapi/marketing/task/receiveAward"
+API_RESERVE = f"{HD_BASE}/api/cn/oapi/marketing/reserve/materials/reserveMaterials"
 
 # 任务状态枚举
 TASK_STATUS_TODO = 1
 TASK_STATUS_CLAIMABLE = 2
 TASK_STATUS_DONE = 3
 TASK_TYPE_BROWSE = 1
-TASK_TYPE_GOODS = 3   # 浏览商品/加购类
+TASK_TYPE_GOODS = 3    # 浏览商品/加购类
+TASK_TYPE_RESERVE = 4  # 预约商品
 
 SIMULATE_WAIT = True   # 是否真实等待浏览秒数
 BROWSE_TIMEOUT = 20    # 请求超时(秒)
@@ -96,6 +95,35 @@ def log(msg):
         print(line, flush=True)
     except UnicodeEncodeError:
         print(line.encode("utf-8", "replace").decode("utf-8", "replace"), flush=True)
+
+
+def extract_activity_ids():
+    """从签到落地页提取签到活动 ID 和任务活动 ID，返回 (sign_activity_id, task_activity_id)"""
+    import re
+    url = LANDING_PAGE + LANDING_PARAMS
+    headers = {
+        "User-Agent": UA,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Referer": REFERER,
+    }
+    try:
+        status, _, rbody = _http("GET", url, headers=headers, timeout=15)
+        html = rbody.decode("utf-8", "replace")
+        match = re.search(r"window\.__DSL__\s*=\s*(\{.*?\});", html, re.DOTALL)
+        if not match:
+            return None, None
+        dsl = json.loads(match.group(1))
+        sign_id = None
+        task_id = None
+        by_id = dsl.get("byId", {})
+        for comp_id, comp in by_id.items():
+            if comp.get("type") == "SignIn":
+                sign_id = comp.get("attr", {}).get("activityInfo", {}).get("activityId")
+            elif comp.get("type") == "Task":
+                task_id = comp.get("attr", {}).get("taskActivityInfo", {}).get("activityId")
+        return sign_id, task_id
+    except Exception:
+        return None, None
 
 
 class _NoRedirect(urllib.request.HTTPRedirectHandler):
@@ -227,11 +255,13 @@ def make_headers(ck_data, extra=None):
 class OppoClient:
     """OPPO 业务客户端（签到），基于已登录的 ck_data"""
 
-    def __init__(self, ck_data):
+    def __init__(self, ck_data, sign_activity_id=None, task_activity_id=None):
         self.ck = ck_data
         self.session_id = ck_data.get("sessionId", "")
         self.encrypted_session = ck_data.get("encryptedSession", "")
         self.openid = ck_data.get("openId", "")
+        self.sign_activity_id = sign_activity_id or ""
+        self.task_activity_id = task_activity_id or ""
 
     def _biz_headers(self):
         h = {
@@ -258,9 +288,8 @@ class OppoClient:
             return (j.get("data") or {}).get("userCredit")
         return None
 
-    def sign_detail(self, activity_id=None):
-        aid = str(activity_id or SIGN_ACTIVITY_IDS[0])
-        url = API_SIGN_DETAIL + "?activityId=" + aid
+    def sign_detail(self):
+        url = API_SIGN_DETAIL + "?activityId=" + str(self.sign_activity_id)
         status, _, rbody = _http("GET", url, headers=self._biz_headers())
         try:
             j = json.loads(rbody.decode("utf-8"))
@@ -272,14 +301,7 @@ class OppoClient:
 
     def do_sign(self):
         """执行签到，返回 (ok, msg, award)"""
-        # 选定有效的签到活动 ID（主用失效时回退备用）
-        detail = None
-        used_aid = None
-        for aid in SIGN_ACTIVITY_IDS:
-            detail = self.sign_detail(aid)
-            if detail:
-                used_aid = aid
-                break
+        detail = self.sign_detail()
         if not detail:
             return False, "签到详情获取失败", None
 
@@ -288,7 +310,7 @@ class OppoClient:
             return True, f"今日已签到，本周累计【{days}】天", 0
 
         body = {
-            "activityId": str(used_aid),
+            "activityId": str(self.sign_activity_id),
             "creditsAddActionId": str(CREDITS_ADD_ACTION_ID),
             "business": 1,
         }
@@ -317,7 +339,7 @@ class OppoClient:
         except Exception:
             award = None
 
-        detail2 = self.sign_detail(used_aid)
+        detail2 = self.sign_detail()
         days = detail2.get("signInDayNum") or detail.get("signInDayNum") or "?"
         if award is not None:
             return True, f"签到成功，获得【{award}】积分，累计【{days}】天", award
@@ -325,14 +347,7 @@ class OppoClient:
 
     def draw_cumulative_award(self):
         """领取累计签到奖励（如连续7天额外积分），返回 (ok, msg, award)"""
-        # 与 do_sign 一致：选定有效签到活动 ID，避免 activityId 不匹配
-        detail = None
-        used_aid = None
-        for aid in SIGN_ACTIVITY_IDS:
-            detail = self.sign_detail(aid)
-            if detail:
-                used_aid = aid
-                break
+        detail = self.sign_detail()
         if not detail:
             return False, "跳过累计奖励(详情获取失败)", 0
         day_num = detail.get("signInDayNum")
@@ -355,7 +370,7 @@ class OppoClient:
             return False, f"累计奖励已领取(连续{day_num}天)", 0
 
         award_id = target.get("awardId")
-        body = {"activityId": str(used_aid), "awardId": str(award_id)}
+        body = {"activityId": str(self.sign_activity_id), "awardId": str(award_id)}
         status, _, rbody = _http("POST", API_DRAW_CUMULATIVE, headers=self._biz_headers(), body=body)
         try:
             data = json.loads(rbody.decode("utf-8"))
@@ -387,7 +402,7 @@ class OppoClient:
         return result
 
     def task_list(self):
-        url = API_TASK_LIST + "?activityId=" + str(TASK_ACTIVITY_ID) + "&source=c"
+        url = API_TASK_LIST + "?activityId=" + str(self.task_activity_id) + "&source=c"
         status, _, rbody = _http("GET", url, headers=self._biz_headers())
         try:
             text = rbody.decode("utf-8")
@@ -452,7 +467,7 @@ class OppoClient:
         # 必须用任务真实的 taskType（如 1=浏览页面、3=浏览商品），服务端据此校验
         params = {
             "taskId": str(task.get("taskId") or ""),
-            "activityId": str(task.get("activityId") or TASK_ACTIVITY_ID),
+            "activityId": str(task.get("activityId") or self.task_activity_id),
             "taskType": str(task.get("taskType") or TASK_TYPE_BROWSE),
         }
         url = API_TASK_REPORT + "?" + "&".join(f"{k}={params[k]}" for k in params)
@@ -467,7 +482,7 @@ class OppoClient:
     def receive_award(self, task):
         params = {
             "taskId": str(task.get("taskId") or ""),
-            "activityId": str(task.get("activityId") or TASK_ACTIVITY_ID),
+            "activityId": str(task.get("activityId") or self.task_activity_id),
             "creditsAddActionId": str(CREDITS_ADD_ACTION_ID),
             "business": "1",
         }
@@ -489,6 +504,50 @@ class OppoClient:
             except Exception:
                 points = 0
         return True, points, f"+{points}" if points else "ok"
+
+    def reserve_goods(self, task):
+        """预约商品(taskType=4)：调用 reserveMaterials 完成预约"""
+        cfg = task.get("attachConfigOne") or {}
+        reserve_activity_id = cfg.get("goodsReserveActivityId")
+        if not reserve_activity_id:
+            log("⚠️ 任务未配置 goodsReserveActivityId")
+            return False
+        body = {
+            "activityId": str(reserve_activity_id),
+            "reserveType": 2,
+            "reserveChannel": "积木页",
+            "reserveComp": "任务组件预约",
+        }
+        # 预约接口需要 Cookie 认证（TOKENSID），与小程序 header 认证并存
+        headers = self._biz_headers()
+        token = f"TOKEN_{self.encrypted_session}" if not self.encrypted_session.startswith("TOKEN_") else self.encrypted_session
+        cookie_parts = [
+            f"TOKENSID={token}",
+            f"ENCODE_TOKENSID={token}",
+            f"oppo_track_id={self.openid}",
+            f"sa_distinct_id={self.openid}",
+            "source_type=503",
+            "s_channel=program_wx",
+            "s_version=80457",
+        ]
+        headers["Cookie"] = "; ".join(cookie_parts)
+        status, _, rbody = _http("POST", API_RESERVE, headers=headers, body=body)
+        try:
+            text = rbody.decode("utf-8")
+        except Exception:
+            return False
+        code, msg, info = self._parse_common_result(text)
+        if code != 200:
+            if any(k in msg for k in ("已预约", "重复", "已经")):
+                return True
+            log(f"⚠️ 预约失败: {msg}")
+            return False
+        if isinstance(info, dict) and info.get("reserveSuccess"):
+            return True
+        # alreadyReserveSuccess 也算成功
+        if isinstance(info, dict) and info.get("alreadyReserveSuccess"):
+            return True
+        return False
 
     def browse_products(self, goods_num):
         """浏览商品任务(taskType=3)：抓取若干 SKU 详情页模拟浏览"""
@@ -574,7 +633,7 @@ class OppoClient:
                 icon, state = "✅", "已完成"
             elif status == TASK_STATUS_CLAIMABLE:
                 continue  # 待领奖不预列，执行时实时领
-            elif ttype in (TASK_TYPE_BROWSE, TASK_TYPE_GOODS):
+            elif ttype in (TASK_TYPE_BROWSE, TASK_TYPE_GOODS, TASK_TYPE_RESERVE):
                 if status in skip:
                     continue  # 待完成不预列，执行时实时做
                 icon, state = "👀", "待完成"
@@ -598,7 +657,7 @@ class OppoClient:
                     "failed": failed, "points": points, "details": details,
                     "manual_hint": manual_hint}
 
-        auto_types = (TASK_TYPE_BROWSE, TASK_TYPE_GOODS)
+        auto_types = (TASK_TYPE_BROWSE, TASK_TYPE_GOODS, TASK_TYPE_RESERVE)
         browse = [t for t in tasks if int(t.get("taskType") or -1) in auto_types]
         other = [t for t in tasks if int(t.get("taskType") or -1) not in auto_types]
         log(f"📋 任务总数 {len(tasks)}，可自动 {len(browse)}，需人工 {len(other)}")
@@ -658,6 +717,36 @@ class OppoClient:
                     log(f"👀 浏览 [{name}] 商品 x{goods_num}")
                     self.browse_products(goods_num)
                     time.sleep(0.8)
+                elif ttype == TASK_TYPE_RESERVE:
+                    log(f"📦 预约 [{name}]")
+                    if not self.reserve_goods(task):
+                        failed += 1
+                        log(f"❌ [{name}] 预约失败")
+                        continue
+                    done += 1
+                    time.sleep(0.8)
+                    status = TASK_STATUS_CLAIMABLE
+                    # 预约完成后直接领奖
+                    ok, pts, msg = self.receive_award(task)
+                    if ok:
+                        awarded += 1
+                        points += pts
+                        if pts:
+                            details.append(f"{name}+{pts}")
+                            log(f"🎁 [{name}] +{pts}积分")
+                        else:
+                            details.append(f"{name}领奖成功")
+                        log(f"✅ {name}  （已完成，积分{award}）")
+                    else:
+                        if any(k in msg for k in ("已领", "已完成", "重复", "已经")):
+                            skipped += 1
+                            log(f"✅ {name}  （已完成，积分{award}）")
+                        else:
+                            failed += 1
+                            details.append(f"{name}失败:{msg}")
+                            log(f"❌ [{name}] 领奖失败: {msg}")
+                    time.sleep(0.6)
+                    continue
                 else:
                     wait_s = self.browse_seconds(task)
                     if simulate_wait:
@@ -703,7 +792,7 @@ def mask_openid(openid):
     return f"{openid[:6]}***{openid[-4:]}"
 
 
-def run_account(openid, index=1, total=1):
+def run_account(openid, index=1, total=1, sign_act_id=None, task_act_id=None):
     """执行单个账号的完整流程"""
     global WXID
     WXID = openid
@@ -715,7 +804,7 @@ def run_account(openid, index=1, total=1):
         log(f"❌ 登录失败: {e}")
         return 1
 
-    client = OppoClient(ck)
+    client = OppoClient(ck, sign_activity_id=sign_act_id, task_activity_id=task_act_id)
 
     # 执行前积分
     before = client.credit_info()
@@ -723,6 +812,10 @@ def run_account(openid, index=1, total=1):
         log(f"💰 执行前积分: {before}")
 
     log("──── 签到 ────")
+    if not sign_act_id:
+        log("❌ 签到活动 ID 提取失败，无法签到")
+        return 1
+    log(f"📌 签到活动 ID: {sign_act_id}")
     ok, msg, award = client.do_sign()
     if ok:
         log(f"✅ {msg}" + (f" (+{award} 积分)" if award else ""))
@@ -736,6 +829,10 @@ def run_account(openid, index=1, total=1):
         log(f"ℹ️ 累计奖励: {msg2}")
 
     log("──── 日常任务 ────")
+    if not task_act_id:
+        log("⚠️ 任务活动 ID 提取失败，任务功能将不可用")
+        return 0
+    log(f"📌 任务活动 ID: {task_act_id}")
     stats = client.do_browse_tasks(simulate_wait=SIMULATE_WAIT)
     if stats.get("manual_hint"):
         log("ℹ️ 提示: 非浏览类任务需人工完成")
@@ -784,10 +881,15 @@ def main():
     log("====== OPPO 商城签到 ======")
     accounts = _split_accounts(WXID)
     log(f"📱 共配置 {len(accounts)} 个账号")
+
+    # 从落地页动态提取活动 ID
+    sign_act_id, task_act_id = extract_activity_ids()
+
     failed = 0
     for i, openid in enumerate(accounts, 1):
         try:
-            rc = run_account(openid, index=i, total=len(accounts))
+            rc = run_account(openid, index=i, total=len(accounts),
+                             sign_act_id=sign_act_id, task_act_id=task_act_id)
             if rc != 0:
                 failed += 1
         except Exception as e:
