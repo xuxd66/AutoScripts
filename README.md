@@ -28,6 +28,7 @@
 | ✅  | `ysjf.js` | 影视飓风小程序签到 | `wx92782ef90ebc836d` | Code | `ysjf_openid` | `task ysjf.js` |
 | ✅  | `zmnlxq.js` | 战马能量星球签到 | `wx10bc773e0851aedd` | Code | `zm_openid` | `task zmnlxq.js` |
 | ✅  | `mt.py` | 美团小程序领券 | `wxde8ac0a21135c07d` | Code | `mt_openid` | `task mt.py` |
+| ✅  | `txq.py` | 汤星球签到 | `wx9bb6d5ac457bd69d` | Code | `txq_openid` | `task txq.py` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
