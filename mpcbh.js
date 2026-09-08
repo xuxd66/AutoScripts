@@ -507,67 +507,6 @@ class MpcbhClient {
     }
   }
 
-  // ==================== 寻找毛铺枸杞云玩家 ====================
-  async gojiCloudPlay() {
-    if (!this.token) return;
-    const aid = 100002;
-    const aidStr = String(aid);
-    const name = '寻找毛铺枸杞云玩家';
-
-    // 1) 活动详情
-    this.log(`🌿 开始 ${name}...`);
-    const details = await this.api(`${BASE}/opactivity/ccncommon/activityDetails`, {
-      method: 'POST', data: { activity_id: aid }, paramOrder: [], signData: { activity_id: aidStr },
-    });
-    if (details.code !== 0) { this.log(`⚠️ ${name} 获取详情失败，原因：${details.message}`); return; }
-
-    // 2) 主页次数
-    const mains = await this.api(`${BASE}/opactivity/ccncommon/dateUserMains`, {
-      method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' }, paramOrder: ['activity_id'], signData: { activity_id: aidStr },
-    });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取信息失败，原因：${mains.message}`); return; }
-    if (mains.data?.activity_status !== 'Can' || !mains.data?.activity?.activity_id) {
-      this.log(`⏭️ ${name} 今天没次数啦`);
-      return;
-    }
-
-    // 3) 开始（种苗-浇水-施肥-求帮养）
-    const start = await this.api(`${BASE}/opactivity/ccncommon/userStarts`, {
-      method: 'POST',
-      data: { activity_id: aid, province: '', city: '', district: '', latitude: '', longitude: '' },
-      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aidStr },
-    });
-    if (start.code !== 0) { this.log(`${name} 开始失败，原因：${start.message}`); return; }
-
-    await sleep(3000 + Math.floor(Math.random() * 5000));
-
-    // 4) 完成
-    const finish = await this.api(`${BASE}/opactivity/ccncommon/userFinishs`, {
-      method: 'POST',
-      data: { activity_id: aidStr, latitude: '', longitude: '', province: '', city: '', district: '', play_finish_is: 1 },
-      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aidStr },
-    });
-    if (finish.code !== 0) { this.log(`${name} 结束失败，原因：${finish.message}`); return; }
-    const playId = finish.data?.user_play_id;
-    if (!playId) { this.log(`${name} user_play_id获取失败`); return; }
-    this.log(`🎯 获取到游戏记录id：${playId}`);
-
-    await sleep(2000);
-
-    // 5) 抽奖
-    const draw = await this.api(`${BASE}/opactivity/ccncommon/datelUserDraws`, {
-      method: 'POST',
-      data: { activity_id: aidStr, province: '', city: '', district: '', user_play_id: playId },
-      paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aidStr },
-    });
-    if (draw.code === 0) {
-      const award = draw.data?.award?.AwardName || draw.data?.awardLocal?.title || '未识别';
-      this.log(`✅ ${name} 成功，获得${award}`);
-    } else {
-      this.log(`${name} 抽奖失败，原因：${draw.message}`);
-    }
-  }
-
   // ==================== 观看视频 ====================
   async taskViewVideoView() {
     if (!this.token) return;
@@ -578,6 +517,70 @@ class MpcbhClient {
       this.log(`✅ 观看视频成功，${result.data?.task?.description || '未识别'}`);
     } else {
       this.log(`观看视频失败：${result.message}`);
+    }
+  }
+
+  // ==================== 毛铺秋日轻松专列（秋季美食列车，worker + ccncommon 通道） ====================
+  // 抓包自 mp01：activityDetails → dateUserMains → userStarts → (游戏约9s) → userFinishs → datelUserDraws
+  // activity_id=555555，活动期 2026-09-01 ~ 2027-03-31，每日 1 次，累计 30 次
+  async autumnTrainStart(aid = '555555', name = '毛铺秋日轻松专列') {
+    if (!this.token) return;
+
+    // 1) 活动详情
+    this.log(`🚂 开始 ${name}...`);
+    const details = await this.api(`${WORKER_BASE}/opactivity/ccncommon/activityDetails`, {
+      method: 'POST', data: { activity_id: aid }, paramOrder: [], signData: { activity_id: aid },
+    });
+    if (details.code !== 0) { this.log(`⚠️ ${name} 获取详情失败，原因：${details.message}`); return; }
+
+    // 2) 主页次数（activity_status=Can 才可玩）
+    const mains = await this.api(`${WORKER_BASE}/opactivity/ccncommon/dateUserMains`, {
+      method: 'POST',
+      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '' },
+      paramOrder: ['activity_id'], signData: { activity_id: aid },
+    });
+    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取信息失败，原因：${mains.message}`); return; }
+    const status = mains.data?.activity_status;
+    if (status !== 'Can' || !mains.data?.activity?.activity_id) {
+      const why = status === 'CanNotToday' ? '今日已玩过' : (status === 'CanNotMax' ? '已达活动总次数上限' : '不可参与');
+      this.log(`⏭️ ${name} 今天没次数啦`);
+      return;
+    }
+
+    // 3) 开始
+    const start = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userStarts`, {
+      method: 'POST',
+      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '' },
+      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
+    });
+    if (start.code !== 0) { this.log(`${name} 开始失败，原因：${start.message}`); return; }
+
+    // 4) 游戏时长（抓包 userStarts → userFinishs 间隔约 9s）
+    await sleep(9000 + Math.floor(Math.random() * 3000));
+
+    // 5) 完成 → user_play_id
+    const finish = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userFinishs`, {
+      method: 'POST',
+      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '', play_data_json: '', play_finish_is: 1 },
+      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
+    });
+    if (finish.code !== 0) { this.log(`${name} 结束失败，原因：${finish.message}`); return; }
+    const playId = finish.data?.user_play_id;
+    if (!playId) { this.log(`${name} user_play_id获取失败`); return; }
+
+    await sleep(2000);
+
+    // 6) 抽奖
+    const draw = await this.api(`${WORKER_BASE}/opactivity/ccncommon/datelUserDraws`, {
+      method: 'POST',
+      data: { activity_id: aid, user_play_id: playId, year: finish.data?.user_record_year || new Date().getFullYear() },
+      paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aid },
+    });
+    if (draw.code === 0) {
+      const award = draw.data?.awardLocal?.title || draw.data?.award?.[0]?.AwardName || '未识别';
+      this.log(`✅ ${name} 成功，获得${award}`);
+    } else {
+      this.log(`${name} 抽奖失败，原因：${draw.message}`);
     }
   }
 
@@ -601,67 +604,6 @@ class MpcbhClient {
       this.log(`✅ ${label}成功，${result.data?.task?.description || '未识别'}`);
     } else {
       this.log(`⚠️ ${label}失败：${result.message}`);
-    }
-  }
-
-  // ==================== 每日调研 ====================
-  // 逻辑：先调 tikuPaperDetails 拉取当日问卷。
-  // - 若当天已完成（返回 questionList 为空或 todayIs=1），直接跳过（今日已完成调研）。
-  // - 否则用 paper.questions 中的当日题号，从 questionList 题库中映射出要答的题目，
-  //   每题取第一个选项作答，再提交 tikuPaperCreates（questions 为题目数组，optionList 只含选中项）。
-  // 这样无论当天派发的题目是什么，都能自动作答领积分。
-  async taskDailySurvey(activityCode = 'task_paper_tiku') {
-    if (!this.token) return;
-
-    // 1) 拉取当日问卷（当天未完成才返回 questionList 题库）
-    const details = await this.api(`${BASE}/opactivity/paperActivity/tikuPaperDetails`, {
-      method: 'POST', data: { activity_code: activityCode }, paramOrder: [],
-    });
-    if (details.code !== 0) { this.log(`⚠️ 每日调研拉取失败：${details.message || '未知'}`); return; }
-    const d = details.data || {};
-    const bank = d.questionList || [];
-    // todayIs=1 表示今日已提交（前端 hasSubmittedToday = todayIs !== -1）
-    if (d.todayIs === 1 || !bank.length) { this.log(`⏭️ 今日已完成调研`); return; }
-    const paperId = d.paper?.paper_id;
-
-    // 2) 当日题号：解析 paper.questions(JSON)，映射到题库；为空则用整个题库
-    let todays;
-    try {
-      const ids = JSON.parse(d.paper?.questions || '[]').map(q => String(q.question_id));
-      const map = new Map(bank.map(q => [String(q.question_id), q]));
-      todays = ids.length ? ids.map(id => map.get(id)).filter(Boolean) : bank;
-    } catch { todays = bank; }
-
-    // 3) 每题作答：单选/多选取第一个选项；文本/日期题填默认文本（日期题需合理生日，否则报"日期题结果提交错误"）
-    const DEFAULT_BIRTHDAY = '2000-12-05';
-    const questions = todays.map(q => {
-      const qtype = String(q.question_type || '').toLowerCase();
-      const isText = qtype === 'basic_text' || qtype === 'basic_date';
-      const chosen = isText ? [] : (q.optionList || []).slice(0, 1);
-      return {
-        question_id: q.question_id,
-        question_code: q.question_code || '',
-        question_type: q.question_type || 'basic_radio',
-        question_tags: q.question_tags || '',
-        question_title: q.question_title || '',
-        question_result: isText ? (qtype === 'basic_date' ? DEFAULT_BIRTHDAY : '') : '',
-        optionList: chosen.map(o => ({ option_id: o.option_id, option_title: o.option_title })),
-      };
-    });
-    if (!questions.length) { this.log(`⚠️ 每日调研：无题目可答`); return; }
-
-    const submit = await this.api(`${BASE}/opactivity/paperActivity/tikuPaperCreates`, {
-      method: 'POST',
-      data: { paper_id: paperId, questions: JSON.stringify(questions), activity_code: activityCode },
-      paramOrder: [],
-    });
-    if (submit.code === 0) {
-      const point = submit.data?.point ?? submit.data?.activity?.jifens;
-      this.log(`✅ 每日调研成功${point ? `，获得${point}积分` : ''}`);
-    } else if (submit.message?.includes('今日已完成') || submit.message?.includes('已提交')) {
-      this.log(`⏭️ 今日已完成调研`);
-    } else {
-      this.log(`⚠️ 每日调研失败：${submit.message}`);
     }
   }
 
@@ -779,8 +721,8 @@ async function main() {
       await client.taskViewVideoView();
       await sleep(2000);
 
-      // 寻找毛铺枸杞云玩家
-      await client.gojiCloudPlay();
+      // 毛铺秋日轻松专列（秋季美食列车）
+      await client.autumnTrainStart();
       await sleep(2000);
 
       // 订阅消息（配置见 subscribeConfig：超级会员日 + 毛铺草本荟小程序 + 草本寻轻记）
@@ -789,11 +731,6 @@ async function main() {
         await client.taskSubscribeMessage(sub.tag, sub.label);
         await sleep(2000);
       }
-
-      // 每日调研
-      client.log(`📝 开始 每日调研..`);
-      await client.taskDailySurvey();
-      await sleep(2000);
 
       // 周五专属
       await client.memberdayStart();
@@ -814,4 +751,8 @@ async function main() {
   return okCount === wxids.length ? 0 : 1;
 }
 
-main().then(code => process.exit(code)).catch(e => { console.error(e); process.exit(1); });
+if (require.main === module) {
+  main().then(code => process.exit(code)).catch(e => { console.error(e); process.exit(1); });
+}
+
+module.exports = { MpcbhClient, getAppSign, API_BASE, BASE, WORKER_BASE, md5 };
