@@ -46,7 +46,7 @@ from requests.packages.urllib3.exceptions import InsecureRequestWarning
 # 禁用SSL警告
 requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
 
-inviteId = []
+inviteId = ['E72FE5AFC7B14F3D96C9F0C9147A66CE',"198E8A9C50704D41AE133DFC89B543D0"]
 
 # ==================== 配置常量 ====================
 PROXY_TIMEOUT = 15
