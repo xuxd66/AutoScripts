@@ -31,6 +31,8 @@
 | ✅  | `txq.py` | 汤星球签到 | `wx9bb6d5ac457bd69d` | Code | `txq_openid` | `task txq.py` |
 | ✅  | `sfzq.py` | 顺丰中秋活动本 | `wxd4185d00bf7e08ac` | Code | `sf_openid` | `task sfzq.py` |
 | ✅  | `gjjj.js` | 顾家家居小程序签到 | `wx0770280d160f09fe` | Code | `gjjj_openid` | `task gjjj.js` |
+| ✅  | `jxzh.py` | 匠心忠华小程序签到 | `wxddaa0832e6acc5f1` | Code | `jxzh_openid` | `task jxzh.py` |
+
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
