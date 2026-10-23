@@ -1,7 +1,7 @@
 /*
 ------------------------------------------
 Author: anonymous
-Date: 2026.08.22
+Date: 2026.09.08
 Description: 毛铺草本荟小程序签到
 Cron: 5 9,12,20 * * *
 ------------------------------------------
@@ -18,7 +18,7 @@ Cron: 5 9,12,20 * * *
    - 请求体：{"app_id": "wxefd0fe341e06b815", "ref": "openid"}
 
 2. 账号变量：
-   mpcbh_openid                                         推荐，毛铺草本荟专属账号变量
+   mpcbh_openid                                        必填，毛铺草本荟专属账号变量
    - 多账号支持使用 &、英文逗号、中文逗号或换行分隔
    - 示例：openid_a&openid_b 或 openid_a,openid_b
 
@@ -52,23 +52,22 @@ const REFERER = `https://servicewechat.com/wxefd0fe341e06b815/741/page-frame.htm
 const API_BASE = 'https://mpb.jingjiu.com';
 const LOGIN_URL = `${API_BASE}/proxy-he/jp/api/loginauto`;
 const BASE = `${API_BASE}/proxy-he/api`;            // 主站业务
-const WORKER_BASE = `${API_BASE}/proxy-he/worker/api`;  // 游戏 Worker（BlzLonglActivity 通道）
+const WORKER_BASE = `${API_BASE}/proxy-he/worker/api`;  // 游戏/活动 Worker 通道
+const POINT_LOG_URL = `${BASE}/FlanUser/logPointList`;  // 积分明细（余额 my_point + 当月收支明细）
+
+// 草本秋日轻松图鉴卡牌（id 与名称，抽中后随 userFinishs 提交）
+const QIURITUJIAN_CARDS = [
+  { id: 101, name: '桑叶' }, { id: 102, name: '桑叶' }, { id: 103, name: '桑叶' }, { id: 104, name: '桑叶' }, { id: 105, name: '桑叶' }, { id: 106, name: '桑叶' },
+  { id: 201, name: '葛根' }, { id: 202, name: '葛根' }, { id: 203, name: '葛根' }, { id: 204, name: '葛根' }, { id: 205, name: '葛根' }, { id: 206, name: '葛根' },
+  { id: 301, name: '苦荞麦' }, { id: 302, name: '苦荞麦' }, { id: 303, name: '苦荞麦' }, { id: 304, name: '苦荞麦' }, { id: 305, name: '苦荞麦' }, { id: 306, name: '苦荞麦' },
+  { id: 401, name: '枸杞子' }, { id: 402, name: '枸杞子' }, { id: 403, name: '枸杞子' }, { id: 404, name: '枸杞子' }, { id: 405, name: '枸杞子' }, { id: 406, name: '枸杞子' },
+  { id: 501, name: '针叶樱桃果' }, { id: 502, name: '针叶樱桃果' }, { id: 503, name: '针叶樱桃果' }, { id: 504, name: '针叶樱桃果' }, { id: 505, name: '针叶樱桃果' }, { id: 506, name: '针叶樱桃果' },
+];
 
 // ==================== 工具函数 ====================
 function ts() { return new Date().toLocaleTimeString('zh-CN', { hour12: false }); }
 // 全局日志（启动/汇总，不带账号前缀）
 function log(msg) { console.log(`[${ts()}] ${msg}`); }
-// 带文字的标题行：左右补 =，使显示宽度与 50 个 = 的分割线一致
-const SEP_W = 50;
-function titleLine(text) {
-  const w = [...text].reduce((a, c) => {
-    const cp = c.codePointAt(0);
-    return a + (cp > 0x2e80 || cp > 0xffff ? 2 : 1);
-  }, 0);
-  const pad = Math.max(0, SEP_W - w);
-  const l = Math.floor(pad / 2), r = pad - l;
-  return '='.repeat(l) + text + '='.repeat(r);
-}
 function md5(s, upper = false) {
   const h = createHash('md5').update(s, 'utf8').digest('hex');
   return upper ? h.toUpperCase() : h;
@@ -77,6 +76,13 @@ function md5(s, upper = false) {
 function maskWxid(id) {
   if (!id || id.length < 11) return id || '未知';
   return id.slice(0, 6) + '***' + id.slice(-4);
+}
+/** 报表用脱敏：owNAX6...i6OM */
+function maskOpenidForReport(id) {
+  const s = String(id || '');
+  if (!s) return '未知账号';
+  if (s.length <= 10) return s;
+  return `${s.slice(0, 6)}...${s.slice(-4)}`;
 }
 function parseAccounts(raw) {
   const n = (raw || '').replace(/，/g, ',').replace(/,/g, '&').replace(/\n/g, '&').replace(/@/g, '&');
@@ -89,6 +95,11 @@ function beijingDate(d = new Date()) {
   const bj = new Date(d.getTime() + 8 * 3600 * 1000);
   const p = n => String(n).padStart(2, '0');
   return `${bj.getUTCFullYear()}-${p(bj.getUTCMonth() + 1)}-${p(bj.getUTCDate())}`;
+}
+// 北京时间(UTC+8)年月（积分明细按月查询，月不带前导0）
+function beijingYearMonth(d = new Date()) {
+  const bj = new Date(d.getTime() + 8 * 3600 * 1000);
+  return { year: bj.getUTCFullYear(), month: bj.getUTCMonth() + 1 };
 }
 
 // ==================== 代理 ====================
@@ -246,17 +257,81 @@ class MpcbhClient {
     return resp.data;
   }
 
-  /** 查询用户积分 */
-  async queryPoints(label = '执行前') {
-    if (!this.token) { this.log('未登录'); return null; }
-    const result = await this.api('/proxy-he/api/user?is_jifen_clear_data=1', { method: 'GET' });
-    if (result.code === 0) {
-      const d = result.data;
-      this.log(`💰 ${label}积分：${d.point}`);
-      return d.point;
+  // ==================== 积分查询 ====================
+  // 端点：GET /proxy-he/api/FlanUser/logPointList
+  //   参数：year/month（北京时间，月不带前导0）/type（空=全部）/pageNo/pageSize（服务端单页上限 300）
+  //   返回：data.my_point 当前积分余额；data.data[] 当月明细，按 create_time 倒序，
+  //         每条含 value（积分值）与 crm（recordType：SEND=入账 / DEDUCT=支出，changeTime：北京时间字符串）
+  // 今日收支：逐页拉取当月明细，本地按 crm.changeTime 过滤当天，遇到早于当天的记录即停止翻页
+
+  /** 拉取一页积分明细 */
+  _pointLogPage(pageNo) {
+    const { year, month } = beijingYearMonth();
+    const q = `year=${year}&month=${month}&type=&pageNo=${pageNo}&pageSize=300`;
+    return this.api(`${POINT_LOG_URL}?${q}`, { method: 'GET' });
+  }
+
+  /** 查询当前总积分，成功返回数值字符串，失败返回 null */
+  async getIntegral() {
+    try {
+      const r = await this._pointLogPage(1);
+      if (r && r.code === 0 && r.data && r.data.my_point !== undefined) {
+        return String(r.data.my_point);
+      }
+      this.log(`⚠️ 积分查询失败: ${(r || {}).message || '无响应'}`);
+      return null;
+    } catch (e) {
+      this.log(`⚠️ 积分查询异常: ${e.message.slice(0, 80)}`);
+      return null;
     }
-    this.log(`❌ 积分查询失败：${result.message || JSON.stringify(result).slice(0, 100)}`);
-    return null;
+  }
+
+  /**
+   * 查询今日积分收支，返回 { total, count, outTotal, outCount }，失败返回 null
+   *   total/count       = 今日入账合计与笔数
+   *   outTotal/outCount = 今日支出合计与笔数
+   */
+  async getTodayIncome() {
+    const day = beijingDate();
+    // unix 时间戳 → 北京时间字符串（crm.changeTime 缺失时兜底）
+    const fmtTime = (t) => {
+      const d = new Date((Number(t) || 0) * 1000 + 8 * 3600 * 1000);
+      const p = (n) => String(n).padStart(2, '0');
+      return `${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())} ` +
+        `${p(d.getUTCHours())}:${p(d.getUTCMinutes())}:${p(d.getUTCSeconds())}`;
+    };
+    try {
+      let total = 0, count = 0, outTotal = 0, outCount = 0;
+      for (let pageNo = 1; pageNo <= 10; pageNo++) {
+        const r = await this._pointLogPage(pageNo);
+        if (!r || r.code !== 0 || !r.data) {
+          if (pageNo === 1) {
+            this.log(`⚠️ 今日积分明细查询失败: ${(r || {}).message || '无响应'}`);
+            return null;
+          }
+          break;
+        }
+        const rows = r.data.data || [];
+        let reachedOld = false;
+        for (const x of rows) {
+          const crm = x.crm || {};
+          const changeTime = crm.changeTime || fmtTime(x.create_time);
+          if (!String(changeTime).startsWith(day)) { reachedOld = true; break; }
+          const v = Math.abs(Number(x.value) || 0);
+          if (crm.recordType === 'DEDUCT' || (Number(x.value) || 0) < 0) {
+            outTotal += v; outCount++;
+          } else {
+            total += v; count++;
+          }
+        }
+        if (reachedOld || rows.length < 300) break;
+      }
+      const round = (n) => Math.round(n * 100) / 100;
+      return { total: round(total), count, outTotal: round(outTotal), outCount };
+    } catch (e) {
+      this.log(`⚠️ 今日积分明细查询异常: ${e.message.slice(0, 80)}`);
+      return null;
+    }
   }
 
   /** 查询用户信息 */
@@ -291,219 +366,104 @@ class MpcbhClient {
     return null;
   }
 
-  // ==================== 通用游戏活动（代谢研究所/草本实验室，走 worker BlzLonglActivity 通道） ====================
-  // 配置：label 前缀 → 活动名
-  // 配置：label 前缀 → { 活动名, 是否带 use_type:'free' }
-  // 代谢研究所单独不带 use_type（服务端返回 80888），草本实验室 需带
-  get activityConfig() {
-    return {
-      daixieyanjiusuo: { name: '代谢研究所', useType: false },
-      caobenshiyanshi: { name: '草本实验室', useType: true },
-    };
-  }
-
-  async commonStart(label, name, useType = true) {
-    if (!this.token) return;
-    // 1) 查次数
-    this.log(`🎮 开始 ${name} ...`);
-    const mains = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 查看活动次数失败：${mains.message}`); return; }
-    const times = mains.data?.today_play_num_can;
-    if (!times || times <= 0) { this.log(`⏭️ ${name} 没次数啦`); return; }
-    const activityId = String(mains.data?.activity?.activity_id || '');
-
-    for (let n = 0; n < times; n++) {
-      // 2) 开始（代谢研究所不带 use_type，其余带 use_type:'free'）
-      let start;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const startData = { activity_id: activityId, play_time_start: Math.round(Date.now() / 1000) };
-        if (useType) startData.use_type = 'free';
-        const paramOrder = useType
-          ? ['activity_id', 'play_time_start', 'use_type']
-          : ['activity_id', 'play_time_start'];
-        start = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDrawGet`, {
-          method: 'POST', data: startData, paramOrder,
-        });
-        if (start.code === 0 && start.data?.user_record_id) break;
-        if (attempt === 0) { this.log(`${name} 开始活动重试（${start.message}）`); await sleep(3000); }
-      }
-      if (start.code !== 0 || !start.data?.user_record_id) { this.log(`${name} 开始活动失败：${start.message}`); return; }
-      const recordId = start.data?.user_record_id;
-
-      await sleep(3000 + Math.floor(Math.random() * 5000));
-
-      // 3) 结束
-      const endData = {
-        activity_id: activityId,
-        play_time_finish: Math.round(Date.now() / 1000),
-        user_record_id: recordId,
-      };
-      const end = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDraws`, {
-        method: 'POST', data: endData, paramOrder: ['activity_id', 'play_time_finish', 'user_record_id'],
-      });
-      if (end.code === 0) {
-        const award = end.data?.title || end.data?.awardLocal?.title || '未识别';
-        this.log(`✅ ${name}成功，获得${award}`);
-      } else {
-        this.log(`${name} 结束活动失败：${end.message}`);
-      }
-      await sleep(2000);
-    }
-  }
-
-  // ==================== 识草寻源（走 worker BlzLonglActivity 通道）====================
-  async shicaoxunyuanStart() {
-    if (!this.token) return;
-    const label = 'shicaoxunyuan';
-    const name = '识草寻源';
-    // 1) 查次数
-    this.log(`🎮 开始 ${name} ...`);
-    const mains = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 查看活动次数失败：${mains.message}`); return; }
-    const times = mains.data?.today_play_num_can;
-    if (!times || times <= 0) { this.log(`⏭️ ${name} 没次数啦`); return; }
-
-    for (let n = 0; n < times; n++) {
-      // 2) 开始 — body={play_time_start, use_type:"free"}，签名 paramOrder=['play_time_start','use_type']
-      let start;
-      for (let attempt = 0; attempt < 2; attempt++) {
-        const startData = { play_time_start: Math.round(Date.now() / 1000), use_type: 'free' };
-        start = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDrawGet`, {
-          method: 'POST', data: startData, paramOrder: ['play_time_start', 'use_type'],
-        });
-        if (start.code === 0 && start.data?.user_record_id) break;
-        if (attempt === 0) { this.log(`${name} 开始活动重试（${start.message}）`); await sleep(3000); }
-      }
-      if (start.code !== 0 || !start.data?.user_record_id) { this.log(`${name} 开始活动失败：${start.message}`); return; }
-      const recordId = start.data?.user_record_id;
-
-      await sleep(8000 + Math.floor(Math.random() * 5000));
-
-      // 3) 结束 — body={play_time_finish, user_record_id}，签名 paramOrder=['play_time_finish','user_record_id']
-      const endData = { play_time_finish: Math.round(Date.now() / 1000), user_record_id: recordId };
-      const end = await this.api(`${WORKER_BASE}/BlzLonglActivity/${label}UserDraws`, {
-        method: 'POST', data: endData, paramOrder: ['play_time_finish', 'user_record_id'],
-      });
-      if (end.code === 0) {
-        const award = end.data?.awardLocal?.title || end.data?.title || '未识别';
-        this.log(`✅ ${name}成功，获得${award}`);
-      } else {
-        this.log(`${name} 结束活动失败：${end.message}`);
-      }
-      await sleep(2000);
-    }
-  }
-
-  // ==================== 草本寻轻记（春，走主站 BlzLongcaobenActivity 通道） ====================
-  get cbxqjConfig() {
-    return {
-      qingxing: '春·万物清醒',
-      chunye: '春·春野探秘',
-    };
-  }
-
-  async cbxqjStart(label, name) {
-    if (!this.token) return;
-    // 1) 查次数（参考：body={}，依据 activity_status==="Can" 且 activity.activity_id 判断）
-    this.log(`🎮 开始 ${name} ...`);
-    const mains = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserMains`, { method: 'POST', data: {}, paramOrder: [] });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取次数失败，原因：${mains.message}`); return; }
-    const statusOk = mains.data?.activity_status === 'Can' || mains.data?.activity?.activity_status === 'Can';
-    if (!statusOk || !mains.data?.activity?.activity_id) {
-      this.log(`⏭️ ${name} 没次数啦`);
-      return;
-    }
-    const activityId = String(mains.data.activity.activity_id);
-
-    // 2) 开始
-    const start = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserStarts`, {
-      method: 'POST', data: { activity_id: activityId }, paramOrder: ['activity_id'], signData: {},
-    });
-    if (start.code !== 0) { this.log(`${name} 获取信息失败，原因：${start.message}`); return; }
-
-    // 3) 抽记录（参考：body={activity_id, play_finish_is:-1}，user_record_id 在此步返回）
-    const draw = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserDrawGet`, {
-      method: 'POST', data: { activity_id: activityId, play_finish_is: -1 }, paramOrder: ['activity_id', 'play_finish_is'], signData: {},
-    });
-    if (draw.code !== 0) { this.log(`${name} 开始失败，原因：${draw.message}`); return; }
-    const recordId = draw.data?.user_record_id;
-    if (!recordId) { this.log(`${name} user_record_id获取失败`); return; }
-    this.log(`🎯 获取到游戏记录id：${recordId}`);
-
-    await sleep(3000 + Math.floor(Math.random() * 5000));
-
-    // 4) 结束
-    const end = await this.api(`${WORKER_BASE}/BlzLongcaobenActivity/${label}UserDraws`, {
-      method: 'POST', data: { user_record_id: recordId }, paramOrder: ['user_record_id'], signData: {},
-    });
-    if (end.code === 0) {
-      const award = end.data?.award?.AwardName || end.data?.awardLocal?.title || '未识别';
-      this.log(`✅ ${name} 成功，获得${award}`);
-    } else {
-      this.log(`${name} 结束失败，原因：${end.message}`);
-    }
-  }
-
-  // ==================== 夏活动（美食配对/解救草本/夏日足球赛） ====================
-  get xiaConfig() {
-    return {
-      '100000': '美食配对-线上常规版',
-      '101030': '解救草本',
-      '100014': '夏日轻松足球赛',
-    };
-  }
-
-  async xiaStart(activityId, name) {
-    if (!this.token) return;
-    const aid = String(activityId);
-    // 1) 活动详情
-    this.log(`🎮 开始 ${name} ...`);
-    const details = await this.api(`${BASE}/opactivity/ccncommon/activityDetails`, {
-      method: 'POST', data: { activity_id: aid }, paramOrder: [], signData: { activity_id: aid },
-    });
-    if (details.code !== 0) { this.log(`⚠️ ${name} 获取次数失败，原因：${details.message}`); return; }
-    if (!details.data?.activity?.activity_id) { this.log(`⏭️ ${name} 没次数啦`); return; }
-    const innerId = String(details.data.activity.activity_id);
-
-    // 2) 主页次数（body={activity_id, latitude, longitude}）
-    const mains = await this.api(`${BASE}/opactivity/ccncommon/dateUserMains`, {
-      method: 'POST', data: { activity_id: innerId, latitude: '', longitude: '' }, paramOrder: ['activity_id'], signData: { activity_id: aid },
-    });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取信息失败，原因：${mains.message}`); return; }
-    if (mains.data?.activity_status !== 'Can' || !mains.data?.activity?.activity_id) {
-      this.log(`⏭️ ${name} 今天没次数啦`);
-      return;
-    }
-
-    // 3) 开始
-    const start = await this.api(`${BASE}/opactivity/ccncommon/userStarts`, {
-      method: 'POST', data: { activity_id: innerId }, paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
-    });
-    if (start.code !== 0) { this.log(`${name} 开始失败，原因：${start.message}`); return; }
-
-    // 4) 完成（user_play_id 在此步返回）
-    const finish = await this.api(`${BASE}/opactivity/ccncommon/userFinishs`, {
+  // ==================== ccncommon 活动通用结算 ====================
+  // userFinishs(playData) → datelUserDraws，返回奖品名，失败返回 false
+  async _ccnFinish(aid, name, playData) {
+    const finish = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userFinishs`, {
       method: 'POST',
-      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '', play_data_json: '', play_finish_is: 1 },
+      data: {
+        activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '',
+        play_data_json: JSON.stringify(playData), play_finish_is: 1,
+      },
       paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
     });
-    if (finish.code !== 0) { this.log(`${name} 结束失败，原因：${finish.message}`); return; }
-    const playId = finish.data?.user_play_id;
-    const recordYear = finish.data?.user_record_year;
-    if (!playId) { this.log(`${name} user_play_id获取失败`); return; }
-    this.log(`🎯 获取到游戏记录id：${playId}`);
+    if (finish.code !== 0) { this.log(`${name} 结束失败：${finish.message}`); return false; }
 
-    await sleep(3000 + Math.floor(Math.random() * 5000));
-
-    // 5) 抽奖
-    const draw = await this.api(`${BASE}/opactivity/ccncommon/datelUserDraws`, {
-      method: 'POST', data: { activity_id: aid, user_play_id: playId, year: recordYear }, paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aid },
+    const draw = await this.api(`${WORKER_BASE}/opactivity/ccncommon/datelUserDraws`, {
+      method: 'POST',
+      data: { activity_id: aid, user_play_id: finish.data?.user_play_id || '', year: finish.data?.user_record_year || '' },
+      paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aid },
     });
-    if (draw.code === 0) {
-      const award = draw.data?.award?.AwardName || draw.data?.awardLocal?.title || '未识别';
-      this.log(`✅ ${name} 成功，获得${award}`);
-    } else {
-      this.log(`${name} 结束失败，原因：${draw.message}`);
+    if (draw.code !== 0) { this.log(`${name} 抽奖失败：${draw.message}`); return false; }
+    return draw.data?.awardLocal?.title || '未识别';
+  }
+
+  // ==================== 草本秋日轻松图鉴（摇一摇抽草本签） ====================
+  // 流程：userMains 查次数 → userStarts → userNodeLists 查已收集图鉴 →
+  //       随机选未收集卡牌 → userFinishs → datelUserDraws 抽奖
+  // activity_id=771122，每日 1 次，累计 30 次
+  async qiuritujianStart() {
+    if (!this.token) return;
+    const name = '草本秋日轻松图鉴';
+    const aid = '771122';
+
+    // 1) 查次数
+    this.log(`🎮 开始 ${name} ...`);
+    const mains = await this.api(`${WORKER_BASE}/offlinaectivity/ccncom26qiuritujian/userMains`, {
+      method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' },
+      paramOrder: ['activity_id'], signData: { activity_id: aid },
+    });
+    if (mains.code !== 0) { this.log(`⚠️ ${name} 查看活动次数失败：${mains.message}`); return; }
+    const times = mains.data?.today_play_num_can;
+    if (!times || times <= 0) { this.log(`⏭️ ${name} 没次数啦`); return; }
+
+    for (let n = 0; n < times; n++) {
+      // 2) 开始
+      const start = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userStarts`, {
+        method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' },
+        paramOrder: ['activity_id'], signData: { activity_id: aid },
+      });
+      if (start.code !== 0) { this.log(`${name} 开始失败：${start.message}`); return; }
+
+      // 3) 已收集图鉴 + 随机选卡（未收集优先，全集收集后从全集随机）
+      const nodes = await this.api(`${WORKER_BASE}/offlinaectivity/ccncom26qiuritujian/userNodeLists`, {
+        method: 'POST', data: { activity_id: aid },
+        paramOrder: ['activity_id'], signData: { activity_id: aid },
+      });
+      const done = ((nodes.code === 0 && nodes.data?.nodeFinishList) || []).map(x => x.id);
+      const pool = QIURITUJIAN_CARDS.filter(x => !done.includes(x.id));
+      const from = pool.length ? pool : QIURITUJIAN_CARDS;
+      const card = from[Math.floor(Math.random() * from.length)];
+
+      // 4) 完成 + 抽奖
+      const award = await this._ccnFinish(aid, name, card);
+      if (!award) return;
+      this.log(`✅ ${name}成功，抽中【${card.name}】签，获得${award}`);
+      if (n < times - 1) await sleep(3000);
+    }
+  }
+
+  // ==================== 登高望远（10 层台阶登顶抽奖） ====================
+  // 流程：dateUserMains 查次数 → userStarts → userFinishs（直接提交登顶 10/10 层）→ datelUserDraws 抽奖
+  // activity_id=772122，每日 1 次，累计 30 次
+  async denggaoStart() {
+    if (!this.token) return;
+    const name = '登高望远';
+    const aid = '772122';
+
+    // 1) 查次数
+    this.log(`🎮 开始 ${name} ...`);
+    const mains = await this.api(`${WORKER_BASE}/opactivity/ccncommon/dateUserMains`, {
+      method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' },
+      paramOrder: ['activity_id'], signData: { activity_id: aid },
+    });
+    if (mains.code !== 0) { this.log(`⚠️ ${name} 查看活动次数失败：${mains.message}`); return; }
+    const times = mains.data?.today_play_num_can;
+    if (!times || times <= 0) { this.log(`⏭️ ${name} 没次数啦`); return; }
+
+    for (let n = 0; n < times; n++) {
+      // 2) 开始
+      const start = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userStarts`, {
+        method: 'POST', data: { activity_id: aid, latitude: '', longitude: '' },
+        paramOrder: ['activity_id'], signData: { activity_id: aid },
+      });
+      if (start.code !== 0) { this.log(`${name} 开始失败：${start.message}`); return; }
+
+      // 3) 完成（登顶 10/10 层）+ 抽奖
+      const award = await this._ccnFinish(aid, name, { level: 10, total: 10 });
+      if (!award) return;
+      this.log(`✅ ${name}成功，获得${award}`);
+      if (n < times - 1) await sleep(3000);
     }
   }
 
@@ -517,70 +477,6 @@ class MpcbhClient {
       this.log(`✅ 观看视频成功，${result.data?.task?.description || '未识别'}`);
     } else {
       this.log(`观看视频失败：${result.message}`);
-    }
-  }
-
-  // ==================== 毛铺秋日轻松专列（秋季美食列车，worker + ccncommon 通道） ====================
-  // 抓包自 mp01：activityDetails → dateUserMains → userStarts → (游戏约9s) → userFinishs → datelUserDraws
-  // activity_id=555555，活动期 2026-09-01 ~ 2027-03-31，每日 1 次，累计 30 次
-  async autumnTrainStart(aid = '555555', name = '毛铺秋日轻松专列') {
-    if (!this.token) return;
-
-    // 1) 活动详情
-    this.log(`🚂 开始 ${name}...`);
-    const details = await this.api(`${WORKER_BASE}/opactivity/ccncommon/activityDetails`, {
-      method: 'POST', data: { activity_id: aid }, paramOrder: [], signData: { activity_id: aid },
-    });
-    if (details.code !== 0) { this.log(`⚠️ ${name} 获取详情失败，原因：${details.message}`); return; }
-
-    // 2) 主页次数（activity_status=Can 才可玩）
-    const mains = await this.api(`${WORKER_BASE}/opactivity/ccncommon/dateUserMains`, {
-      method: 'POST',
-      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '' },
-      paramOrder: ['activity_id'], signData: { activity_id: aid },
-    });
-    if (mains.code !== 0) { this.log(`⚠️ ${name} 获取信息失败，原因：${mains.message}`); return; }
-    const status = mains.data?.activity_status;
-    if (status !== 'Can' || !mains.data?.activity?.activity_id) {
-      const why = status === 'CanNotToday' ? '今日已玩过' : (status === 'CanNotMax' ? '已达活动总次数上限' : '不可参与');
-      this.log(`⏭️ ${name} 今天没次数啦`);
-      return;
-    }
-
-    // 3) 开始
-    const start = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userStarts`, {
-      method: 'POST',
-      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '' },
-      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
-    });
-    if (start.code !== 0) { this.log(`${name} 开始失败，原因：${start.message}`); return; }
-
-    // 4) 游戏时长（抓包 userStarts → userFinishs 间隔约 9s）
-    await sleep(9000 + Math.floor(Math.random() * 3000));
-
-    // 5) 完成 → user_play_id
-    const finish = await this.api(`${WORKER_BASE}/opactivity/ccncommon/userFinishs`, {
-      method: 'POST',
-      data: { activity_id: aid, latitude: '', longitude: '', province: '', city: '', district: '', play_data_json: '', play_finish_is: 1 },
-      paramOrder: ['activity_id', 'play_finish_is'], signData: { activity_id: aid },
-    });
-    if (finish.code !== 0) { this.log(`${name} 结束失败，原因：${finish.message}`); return; }
-    const playId = finish.data?.user_play_id;
-    if (!playId) { this.log(`${name} user_play_id获取失败`); return; }
-
-    await sleep(2000);
-
-    // 6) 抽奖
-    const draw = await this.api(`${WORKER_BASE}/opactivity/ccncommon/datelUserDraws`, {
-      method: 'POST',
-      data: { activity_id: aid, user_play_id: playId, year: finish.data?.user_record_year || new Date().getFullYear() },
-      paramOrder: ['activity_id', 'user_play_id'], signData: { activity_id: aid },
-    });
-    if (draw.code === 0) {
-      const award = draw.data?.awardLocal?.title || draw.data?.award?.[0]?.AwardName || '未识别';
-      this.log(`✅ ${name} 成功，获得${award}`);
-    } else {
-      this.log(`${name} 抽奖失败，原因：${draw.message}`);
     }
   }
 
@@ -653,14 +549,64 @@ class MpcbhClient {
   }
 }
 
+// ==================== 执行报表 ====================
+/** 执行报表 */
+function printReport(results) {
+  const total = results.length;
+  const success = results.filter(r => r.success).length;
+  const failed = total - success;
+  const now = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  const stamp = `${now.getFullYear()}-${p(now.getMonth() + 1)}-${p(now.getDate())} ` +
+    `${p(now.getHours())}:${p(now.getMinutes())}:${p(now.getSeconds())}`;
+
+  const lines = [
+    '==============================',
+    `🕒 执行时间：${stamp}`,
+    `📊 统计数据：成功 ${success} / 总计 ${total}`,
+    `✅ 成功账号：${success} 个`,
+    `❌ 失败账号：${failed} 个`,
+  ];
+
+  results.forEach((r, idx) => {
+    lines.push(`👤 【账号${idx + 1}】${r.account}${r.user ? `（${r.user}）` : ''}`);
+    lines.push(`${r.success ? '✅' : '❌'} 状态：${r.success ? '执行成功' : '执行失败'}`);
+    if (r.success) {
+      const d = r.daily || {};
+      if (d.after !== null && d.after !== undefined) {
+        if (d.before !== null && d.before !== undefined) {
+          const diff = Number(d.after) - Number(d.before);
+          lines.push(`💰 总积分: ${d.after}（本次 ${diff >= 0 ? '+' : ''}${diff}）`);
+        } else {
+          lines.push(`💰 总积分: ${d.after}`);
+        }
+      }
+      const inc = d.income;
+      if (inc) {
+        lines.push(`💰 今日入账积分: ${inc.total} （${inc.count}笔）`);
+        if (inc.outCount > 0) lines.push(`💸 今日支出积分: ${inc.outTotal} （${inc.outCount}笔）`);
+      }
+    } else {
+      lines.push(`⚠️ 原因：${r.error || '登录失效 / 授权已过期'}`);
+    }
+  });
+
+  lines.push(`======🎉 完成 ${success} / 共 ${total} 账号=======`);
+  log('');   // 与上方账号日志空一行分隔
+  log('[执行报表]');
+  for (const line of lines) log(line);
+}
+
 // ==================== 主流程 ====================
 async function main() {
   const wxids = parseAccounts(MPCBH_OPENIDS);
   if (!wxids.length) { log('未配置 mpcbh_openid（多账号用 & 或换行分隔）'); return 1; }
   if (!WX_SERVER) { log('未配置 wx_server_url'); return 1; }
 
-  log(titleLine('毛铺草本荟签到'));
+  log('='.repeat(30));
+  log('🚀 毛铺草本荟签到');
   log(`📱 共配置 ${wxids.length} 个账号`);
+  log('='.repeat(30));
 
   const proxyMgr = new ProxyManager(PROXY_API_URL);
   let okCount = 0;
@@ -668,7 +614,7 @@ async function main() {
 
   for (let i = 0; i < wxids.length; i++) {
     const wxid = wxids[i];
-    log(`${'='.repeat(50)}`);
+    if (i > 0) log(`${'='.repeat(30)}`);
     log(`>>> 账号 ${i + 1}/${wxids.length} : ${maskWxid(wxid)}`);
 
     const client = new MpcbhClient(wxid);
@@ -679,14 +625,15 @@ async function main() {
     }
 
     const ok = await client.login();
+    let nick = '';
     if (ok) {
       okCount++;
-      const sum = client.summary();
-      results.push(sum);
 
-      // 查询积分 + 用户信息
-      await client.queryUserInfo();
-      const beforePoint = await client.queryPoints('执行前');
+      // 用户信息 + 执行前积分
+      const info = await client.queryUserInfo();
+      nick = (info && info.user_show && info.user_show.name) || '';
+      const before = await client.getIntegral();
+      if (before !== null) client.log(`💰 执行前积分：${before}`);
       await sleep(2000);
 
       // 每日签到
@@ -694,35 +641,15 @@ async function main() {
       await client.signIn();
       await sleep(2000);
 
-      // 通用游戏活动（代谢研究所/草本实验室，走 worker BlzLonglActivity 通道）
-      for (const [label, cfg] of Object.entries(client.activityConfig)) {
-        await client.commonStart(label, cfg.name, cfg.useType);
-        await sleep(3000);
-      }
-
-      // 识草寻源（独立流程，body/paramOrder 与通用流程不同，不含 activity_id）
-      await client.shicaoxunyuanStart();
+      // 草本秋日轻松图鉴 + 登高望远
+      await client.qiuritujianStart();
       await sleep(3000);
-
-      // 草本寻轻记（春，走主站 BlzLongcaobenActivity 通道）
-      for (const [label, name] of Object.entries(client.cbxqjConfig)) {
-        await client.cbxqjStart(label, name);
-        await sleep(3000);
-      }
-
-      // 夏活动
-      for (const [aid, name] of Object.entries(client.xiaConfig)) {
-        await client.xiaStart(aid, name);
-        await sleep(3000);
-      }
+      await client.denggaoStart();
+      await sleep(3000);
 
       // 观看视频
       client.log(`📺 开始 观看视频...`);
       await client.taskViewVideoView();
-      await sleep(2000);
-
-      // 毛铺秋日轻松专列（秋季美食列车）
-      await client.autumnTrainStart();
       await sleep(2000);
 
       // 订阅消息（配置见 subscribeConfig：超级会员日 + 毛铺草本荟小程序 + 草本寻轻记）
@@ -736,18 +663,35 @@ async function main() {
       await client.memberdayStart();
       await sleep(2000);
 
-      // 最终积分
-      const afterPoint = await client.queryPoints('执行后');
-      if (beforePoint != null && afterPoint != null) {
-        client.log(`💰 总积分: ${afterPoint}（本次 +${afterPoint - beforePoint}）`);
+      // 执行后积分 + 今日收支
+      const after = await client.getIntegral();
+      if (after !== null) {
+        client.log(`💰 执行后积分：${after}`);
+        if (before !== null) {
+          const diff = Number(after) - Number(before);
+          client.log(`💰 总积分: ${after}（本次 ${diff >= 0 ? '+' : ''}${diff}）`);
+        }
       }
+      const income = await client.getTodayIncome();
+      if (income) {
+        client.log(`💰 今日入账积分: ${income.total}（${income.count}笔）`);
+        if (income.outCount > 0) client.log(`💰 今日支出积分: ${income.outTotal}（${income.outCount}笔）`);
+      }
+      client.reportData = { before, after, income };
     } else {
       client.log(`❌ 授权已过期或ck无效，请重新获取`);
     }
+    results.push({
+      success: !!ok,
+      account: maskOpenidForReport(wxid),
+      user: nick,
+      daily: client.reportData || {},
+      error: ok ? '' : '登录失败：授权已过期或ck无效',
+    });
     if (i < wxids.length - 1) await sleep(2000);
   }
 
-  log(titleLine(`🎉 完成 ${okCount} / 共 ${wxids.length} 账号`));
+  printReport(results);
   return okCount === wxids.length ? 0 : 1;
 }
 
@@ -755,4 +699,4 @@ if (require.main === module) {
   main().then(code => process.exit(code)).catch(e => { console.error(e); process.exit(1); });
 }
 
-module.exports = { MpcbhClient, getAppSign, API_BASE, BASE, WORKER_BASE, md5 };
+module.exports = { MpcbhClient, getAppSign, API_BASE, BASE, md5 };
