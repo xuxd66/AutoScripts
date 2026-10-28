@@ -33,6 +33,7 @@
 | ✅  | `gjjj.js` | 顾家家居小程序签到 | `wx0770280d160f09fe` | Code | `gjjj_openid` | `task gjjj.js` |
 | ✅  | `jxzh.py` | 匠心忠华小程序签到 | `wxddaa0832e6acc5f1` | Code | `jxzh_openid` | `task jxzh.py` |
 | ✅  | `cyy_07.py` | 草原云阅读第七期 | `wxcf78d47051628692` | Code | `cyy_openid` | `task cyy.py` |
+| ✅  | `dc.py` | 大潮APP阅读本 | `wx2e98fb1d45a98f73` | Code | `dc_ck、dc_openid` | `task dc.py` |
 
 > 部分脚本需要通过 **Code 登录** 获取账号信息，请先部署并配置 `YYB-Go` 服务。
 
